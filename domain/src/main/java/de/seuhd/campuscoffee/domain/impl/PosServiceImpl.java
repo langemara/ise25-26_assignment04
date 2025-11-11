@@ -17,6 +17,7 @@ import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -81,22 +82,83 @@ public class PosServiceImpl implements PosService {
 
     /**
      * Converts an OSM node to a POS domain object.
-     * Note: This is a stub implementation and should be replaced with real mapping logic.
+     * Extracts relevant tags from OpenStreetMap data and maps them to POS fields.
      */
     private @NonNull Pos convertOsmNodeToPos(@NonNull OsmNode osmNode) {
-        if (osmNode.nodeId().equals(5589879349L)) {
-            return Pos.builder()
-                    .name("Rada Coffee & Rösterei")
-                    .description("Caffé und Rösterei")
-                    .type(PosType.CAFE)
-                    .campus(CampusType.ALTSTADT)
-                    .street("Untere Straße")
-                    .houseNumber("21")
-                    .postalCode(69117)
-                    .city("Heidelberg")
-                    .build();
-        } else {
-            throw new OsmNodeMissingFieldsException(osmNode.nodeId());
+        Map<String, String> tags = osmNode.tags();
+        
+        String name = extractName(tags, osmNode.nodeId());
+        String description = extractDescription(tags);
+        PosType type = extractPosType(tags, osmNode.nodeId());
+        String street = extractRequiredTag(tags, "addr:street", osmNode.nodeId());
+        String houseNumber = extractRequiredTag(tags, "addr:housenumber", osmNode.nodeId());
+        Integer postalCode = extractPostalCode(tags, osmNode.nodeId());
+        String city = extractRequiredTag(tags, "addr:city", osmNode.nodeId());
+        
+        return Pos.builder()
+                .name(name)
+                .description(description)
+                .type(type)
+                .campus(CampusType.ALTSTADT)
+                .street(street)
+                .houseNumber(houseNumber)
+                .postalCode(postalCode)
+                .city(city)
+                .build();
+    }
+    
+    private @NonNull String extractName(@NonNull Map<String, String> tags, @NonNull Long nodeId) {
+        if (tags.containsKey("name:de")) {
+            return tags.get("name:de");
+        } else if (tags.containsKey("name:en")) {
+            return tags.get("name:en");
+        } else if (tags.containsKey("name")) {
+            return tags.get("name");
+        }
+        log.error("Required tag 'name' missing for OSM node {}", nodeId);
+        throw new OsmNodeMissingFieldsException(nodeId);
+    }
+    
+    private @NonNull String extractDescription(@NonNull Map<String, String> tags) {
+        if (tags.containsKey("description")) {
+            return tags.get("description");
+        }
+        return "Imported from OpenStreetMap";
+    }
+    
+    private @NonNull PosType extractPosType(@NonNull Map<String, String> tags, @NonNull Long nodeId) {
+        String amenity = tags.get("amenity");
+        String shop = tags.get("shop");
+        
+        if ("cafe".equals(amenity) || "biergarten".equals(amenity)) {
+            return PosType.CAFE;
+        } else if ("bakery".equals(amenity) || "bakery".equals(shop)) {
+            return PosType.BAKERY;
+        } else if ("vending_machine".equals(amenity)) {
+            return PosType.VENDING_MACHINE;
+        } else if ("restaurant".equals(amenity) || "fast_food".equals(amenity)) {
+            return PosType.CAFETERIA;
+        }
+        
+        log.warn("Unknown amenity type '{}' for OSM node {}, defaulting to CAFE", amenity, nodeId);
+        return PosType.CAFE;
+    }
+    
+    private @NonNull String extractRequiredTag(@NonNull Map<String, String> tags, @NonNull String key, @NonNull Long nodeId) {
+        if (!tags.containsKey(key) || tags.get(key).isBlank()) {
+            log.error("Required tag '{}' missing for OSM node {}", key, nodeId);
+            throw new OsmNodeMissingFieldsException(nodeId);
+        }
+        return tags.get(key);
+    }
+    
+    private @NonNull Integer extractPostalCode(@NonNull Map<String, String> tags, @NonNull Long nodeId) {
+        String postalCodeStr = extractRequiredTag(tags, "addr:postcode", nodeId);
+        try {
+            return Integer.parseInt(postalCodeStr);
+        } catch (NumberFormatException e) {
+            log.error("Invalid postal code '{}' for OSM node {}", postalCodeStr, nodeId);
+            throw new OsmNodeMissingFieldsException(nodeId);
         }
     }
 
